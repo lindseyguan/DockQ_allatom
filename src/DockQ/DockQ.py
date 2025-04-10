@@ -2,6 +2,7 @@
 
 import sys
 import json
+import pickle
 import gzip
 import math
 import logging
@@ -104,6 +105,12 @@ def parse_args():
             or the equivalent '--mapping *:BC'.""",
     )
 
+    parser.add_argument(
+        "--all_atom",
+        help="If RMS values should be calculated with all atoms. Uses modeled atoms as reference list.",
+        action="store_true",
+    )
+
     return parser.parse_args()
 
 
@@ -170,6 +177,7 @@ def calc_sym_corrected_lrmsd(
     sample_chains,
     ref_chains,
     alignments,
+    all_atom=False
 ):
     import networkx as nx
 
@@ -203,13 +211,21 @@ def calc_sym_corrected_lrmsd(
         sample_receptor, ref_receptor, receptor_alignment
     )
 
-    sample_interface_atoms, ref_interface_atoms = subset_atoms(
-        aligned_sample_receptor,
-        aligned_ref_receptor,
-        atom_types=BACKBONE_ATOMS,
-        residue_subset=receptor_interface,
-        what="receptor",
-    )
+    if all_atom:
+        sample_interface_atoms, ref_interface_atoms = subset_atoms(
+            aligned_sample_receptor,
+            aligned_ref_receptor,
+            residue_subset=receptor_interface,
+            what="receptor",
+        )
+    else:
+        sample_interface_atoms, ref_interface_atoms = subset_atoms(
+            aligned_sample_receptor,
+            aligned_ref_receptor,
+            atom_types=BACKBONE_ATOMS,
+            residue_subset=receptor_interface,
+            what="receptor",
+        )
 
     sample_ligand_atoms_ids = [atom.id for atom in sample_ligand.get_atoms()]
     sample_ligand_atoms_ele = [atom.element for atom in sample_ligand.get_atoms()]
@@ -260,10 +276,10 @@ def calc_sym_corrected_lrmsd(
             min_lrms = lrms
     dockq = dockq_formula(0, 0, min_lrms)
     info = {
-        "DockQ": dockq,
-        "LRMSD": min_lrms,
-        "mapping": best_mapping,
-        "is_het": sample_ligand.is_het,
+        f"DockQ": dockq,
+        f"LRMSD": min_lrms,
+        f"mapping": best_mapping,
+        f"is_het": sample_ligand.is_het,
     }
     return info
 
@@ -275,6 +291,7 @@ def calc_DockQ(
     alignments,
     capri_peptide=False,
     low_memory=False,
+    all_atom=False
 ):
 
     fnat_threshold = FNAT_THRESHOLD if not capri_peptide else FNAT_THRESHOLD_PEPTIDE
@@ -330,18 +347,30 @@ def calc_DockQ(
         threshold=interface_threshold ** 2,
     )
 
-    sample_interface_atoms1, ref_interface_atoms1 = subset_atoms(
-        aligned_sample_1,
-        aligned_ref_1,
-        atom_types=BACKBONE_ATOMS,
-        residue_subset=interacting_pairs[0],
-    )
-    sample_interface_atoms2, ref_interface_atoms2 = subset_atoms(
-        aligned_sample_2,
-        aligned_ref_2,
-        atom_types=BACKBONE_ATOMS,
-        residue_subset=interacting_pairs[1],
-    )
+    if all_atom:
+        sample_interface_atoms1, ref_interface_atoms1 = subset_atoms(
+            aligned_sample_1,
+            aligned_ref_1,
+            residue_subset=interacting_pairs[0],
+        )
+        sample_interface_atoms2, ref_interface_atoms2 = subset_atoms(
+            aligned_sample_2,
+            aligned_ref_2,
+            residue_subset=interacting_pairs[1],
+        )
+    else: # Use backbone-only
+        sample_interface_atoms1, ref_interface_atoms1 = subset_atoms(
+            aligned_sample_1,
+            aligned_ref_1,
+            atom_types=BACKBONE_ATOMS,
+            residue_subset=interacting_pairs[0],
+        )
+        sample_interface_atoms2, ref_interface_atoms2 = subset_atoms(
+            aligned_sample_2,
+            aligned_ref_2,
+            atom_types=BACKBONE_ATOMS,
+            residue_subset=interacting_pairs[1],
+        )
 
     sample_interface_atoms = np.asarray(
         sample_interface_atoms1 + sample_interface_atoms2
@@ -372,15 +401,31 @@ def calc_DockQ(
         else ("ligand", "receptor")
     )
 
-    receptor_atoms_native, receptor_atoms_sample = subset_atoms(
-        receptor_chains[0],
-        receptor_chains[1],
-        atom_types=BACKBONE_ATOMS,
-        what="receptor",
-    )
-    ligand_atoms_native, ligand_atoms_sample = subset_atoms(
-        ligand_chains[0], ligand_chains[1], atom_types=BACKBONE_ATOMS, what="ligand"
-    )
+    if all_atom:
+        receptor_atoms_native, receptor_atoms_sample = subset_atoms(
+            receptor_chains[0],
+            receptor_chains[1],
+            what="receptor",
+        )
+        ligand_atoms_native, ligand_atoms_sample = subset_atoms(
+            ligand_chains[0], 
+            ligand_chains[1], 
+            what="ligand"
+        )
+    else:
+        receptor_atoms_native, receptor_atoms_sample = subset_atoms(
+            receptor_chains[0],
+            receptor_chains[1],
+            atom_types=BACKBONE_ATOMS,
+            what="receptor",
+        )
+        ligand_atoms_native, ligand_atoms_sample = subset_atoms(
+            ligand_chains[0], 
+            ligand_chains[1], 
+            atom_types=BACKBONE_ATOMS, 
+            what="ligand"
+        )
+
     # Set to align on receptor
     super_imposer.set(
         np.asarray(receptor_atoms_native), np.asarray(receptor_atoms_sample)
@@ -418,6 +463,7 @@ def calc_DockQ(
     info["class1"] = class1
     info["class2"] = class2
     info["is_het"] = False
+    info["all_atom_calculation"] = all_atom
 
     return info
 
@@ -514,7 +560,7 @@ def get_interacting_pairs(distances, threshold):
 def subset_atoms(
     mod_chain,
     ref_chain,
-    atom_types,
+    atom_types=None,
     residue_subset=None,
     what="",
 ):
@@ -533,7 +579,12 @@ def subset_atoms(
         mod_res_atoms_ids = [atom.id for atom in mod_res_atoms]
         ref_res_atoms_ids = [atom.id for atom in ref_res_atoms]
 
-        for atom_type in atom_types:
+        if atom_types is None:
+            atom_list = mod_res_atoms_ids # Use atom types from modeled residue
+        else:
+            atom_list = atom_types
+
+        for atom_type in atom_list:
             try:
                 mod_i = mod_res_atoms_ids.index(atom_type)
                 ref_i = ref_res_atoms_ids.index(atom_type)
@@ -553,6 +604,7 @@ def run_on_chains(
     capri_peptide=False,
     small_molecule=True,
     low_memory=False,
+    all_atom=False,
 ):
     # realign each model chain against the corresponding native chain
     alignments = []
@@ -572,12 +624,14 @@ def run_on_chains(
             alignments=tuple(alignments),
             capri_peptide=capri_peptide,
             low_memory=low_memory,
+            all_atom=all_atom,
         )
     else:
         info = calc_sym_corrected_lrmsd(
             model_chains,
             native_chains,
             alignments=tuple(alignments),
+            all_atom=all_atom,
         )
     return info
 
@@ -606,6 +660,7 @@ def run_on_all_native_interfaces(
     no_align=False,
     capri_peptide=False,
     low_memory=False,
+    all_atom=False,
 ):
     """Given a native-model chain map, finds all non-null native interfaces
     and runs DockQ for each native-model pair of interfaces"""
@@ -633,6 +688,7 @@ def run_on_all_native_interfaces(
                 capri_peptide=capri_peptide,
                 small_molecule=small_molecule,
                 low_memory=low_memory,
+                all_atom=all_atom,
             )
             if info:
                 info["chain1"], info["chain2"] = (
@@ -922,6 +978,7 @@ def main():
         no_align=args.no_align,
         capri_peptide=args.capri_peptide,
         low_memory=low_memory,
+        all_atom=args.all_atom,
     )
 
     if num_chain_combinations > 1:
@@ -954,6 +1011,7 @@ def main():
                 no_align=args.no_align,
                 capri_peptide=args.capri_peptide,
                 low_memory=False,
+                all_atom=args.all_atom,
             )
 
     else:  # skip multi-threading for single jobs (skip the bar basically)
@@ -976,8 +1034,12 @@ def main():
     info["best_mapping_str"] = f"{format_mapping_string(best_mapping)}"
 
     if args.json:
-        with open(args.json, "w") as fp:
-            json.dump(info, fp)
+        if '.json' in args.json:
+            with open(args.json, "w") as fp:
+                json.dump(info, fp)
+        elif '.pkl' in args.json:
+            with open(args.json, 'wb') as f:
+                pickle.dump(info, f)
 
     print_results(
         info, args.short, args.verbose, args.capri_peptide, args.small_molecule
