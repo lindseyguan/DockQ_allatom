@@ -14,7 +14,7 @@ pip install DockQ
 Or, if you want the latest commit: clone the repository and run `pip` within the repo directory:
 
 ```
-git clone https://github.com/bjornwallner/DockQ/
+git clone https://github.com/lindseyguan/DockQ_allatom
 cd DockQ
 pip install .
 ```
@@ -208,6 +208,7 @@ optional arguments:
                         Specify a chain mapping between model and native structure. If the native contains two chains "H" and "L" while the model contains two chains "A" and "B", and chain A is a model of native chain H and chain B is a model
                         of native chain L, the flag can be set as: '--mapping AB:HL'. This can also help limit the search to specific native interfaces. For example, if the native is a tetramer (ABCD) but the user is only interested in the
                         interface between chains B and C, the flag can be set as: '--mapping :BC' or the equivalent '--mapping *:BC'.
+  --all_atom            If RMS values should be calculated with all atoms. Uses modeled atoms as reference list.
 ```
 
 **Importing DockQ as python module**
